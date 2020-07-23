@@ -11,7 +11,6 @@
 #ifdef DEBUG_MODE
 
 #include <vector>
-#include <algorithm>
 #include <iomanip>
 #include <cassert>
 
@@ -20,22 +19,13 @@
 #define ASSERT(x)
 #endif
 
-template<typename K>
-struct default_compare {
-    inline int operator()(const K &a, const K &b) {
-        if constexpr(std::is_floating_point_v<K> || std::is_signed_v<K>) {
-            return a - b;
-        } else return (a < b) ? -1 : ((a > b) ? 1 : 0);
-    }
-};
-
-template<typename K, typename V, size_t B = 6, typename Compare = default_compare<K>>
+template<typename K, typename V, size_t B = 6, typename Compare = std::less<K>>
 class BTree;
 
-template<typename K, typename V, size_t B = 6, typename Compare = default_compare<K>>
+template<typename K, typename V, size_t B = 6, typename Compare = std::less<K>>
 class AbstractBTNode;
 
-template<typename K, typename V, bool IsInternal, typename Compare = default_compare<K>, size_t B = 6>
+template<typename K, typename V, bool IsInternal, typename Compare = std::less<K>, size_t B = 6>
 struct alignas(64) BTreeNode;
 
 template<typename K, typename V, size_t B, typename Compare>
@@ -196,23 +186,18 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
         return parent_idx;
     }
 
-    inline LocFlag linear_search(const K &key) {
+    inline LocFlag local_search(const K &key) {
         ASSERT(usage < 2 * B);
-        for (uint i = 0; i < usage; ++i) {
-            auto res = Node::comp(key, keys[i]);
-            if (res < 0) {
-                return GO_DOWN | i;
-            }
-            if (res == 0) {
-                return FOUND | i;
-            }
+        uint16_t position = std::lower_bound(keys, keys + usage, key, Node::comp) - keys;
+        if (position != usage && !Node::comp(key, keys[position])) {
+            return FOUND | position;
         }
-        return GO_DOWN | usage;
+        return GO_DOWN | position;
     }
 
     bool member(const K &key) override {
         ASSERT(usage < 2 * B);
-        auto flag = linear_search(key);
+        auto flag = local_search(key);
         if (flag & FOUND) {
             return true;
         }
@@ -265,7 +250,7 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
     }
 
     std::optional<V> insert(const K &key, const V &value, NodePtr *root) override {
-        auto res = linear_search(key);
+        auto res = local_search(key);
         if (res & FOUND) {
             V original = std::move(values[res & FOUND_MASK]);
             values[res & FOUND_MASK] = value;
@@ -455,7 +440,7 @@ Compare AbstractBTNode<K, V, B, Compare>::comp{};
 int main() {
     std::vector<int> a, b;
     BTree<int, int> test;
-    for (int i = 0; i < 100; ++i) {
+    for (int i = 0; i < 100000; ++i) {
         auto k = rand();
         a.push_back(k);
         test.insert(k, k);
@@ -466,6 +451,6 @@ int main() {
         b.push_back(i.first);
     }
     assert(a == b);
-    test.display();
+    //test.display();
     return 0;
 }
