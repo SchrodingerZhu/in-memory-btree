@@ -4,9 +4,9 @@
 #include <algorithm>
 #include <cstring>
 
-#define FOUND (1u<<16u)
+#define FOUND (1u << 16u)
 #define FOUND_MASK (FOUND - 1u)
-#define GO_DOWN (1u<<24u)
+#define GO_DOWN (1u << 24u)
 #define GO_DOWN_MASK (GO_DOWN - 1u)
 #ifndef DEFAULT_BTREE_FACTOR
 #define DEFAULT_BTREE_FACTOR 6
