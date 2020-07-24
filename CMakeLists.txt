@@ -1,9 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 project(bt)
-set(CMAKE_BUILD_TYPE Debug)
+set(CMAKE_BUILD_TYPE Release)
 set(CMAKE_CXX_STANDARD 17)
 
 include_directories(.)
 enable_testing()
 add_executable(test_insert test_insert.cpp)
 add_executable(test_pop test_pop.cpp)
+add_test(insert test_insert)
+add_test(pop test_insert)

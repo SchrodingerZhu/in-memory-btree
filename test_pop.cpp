@@ -6,9 +6,12 @@
 #include <btree.hpp>
 
 #define LIMIT 20000
-#define POP_LIMIT 1000
+#define POP_LIMIT 10000
 
 int main() {
+    auto seed = time(nullptr);
+    std::cout << seed << std::endl;
+    srand(seed);
     {
         std::vector<int> a, b;
         BTree<int, int> test;
