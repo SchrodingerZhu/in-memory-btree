@@ -3,7 +3,8 @@
 
 #include <algorithm>
 #include <cstring>
-
+#define keys node_keys()
+#define values node_values()
 #define FOUND (1u << 16u)
 #define FOUND_MASK (FOUND - 1u)
 #define GO_DOWN (1u << 24u)
@@ -98,12 +99,15 @@ struct AbstractBTNode {
 
     virtual V &value_at(size_t) = 0;
 
+    virtual K* node_keys() = 0;
+
+    virtual V* node_values() = 0;
+
     virtual std::pair<K, V> erase(uint16_t index, AbstractBTNode **root) = 0;
 
     virtual AbstractBTNode *&child_at(size_t) = 0;
 
     virtual ~AbstractBTNode() = default;
-
 #ifdef DEBUG_MODE
 
     virtual void display(size_t indent) = 0;
@@ -129,8 +133,8 @@ public:
         if (root == nullptr) {
             auto node = new BTreeNode<K, V, false, Compare, B>;
             node->usage = 1;
-            node->keys[0] = key;
-            node->values[0] = value;
+            new (node->__keys) K(key);
+            new (node->__values) V(value);
             root = node;
             return std::nullopt;
         }
@@ -194,16 +198,18 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
     using Node = AbstractBTNode<K, V, B, Compare>;
     using NodePtr = Node *;
     using SplitResult = typename AbstractBTNode<K, V, B, Compare>::SplitResult;
+    using KeyBlock = std::aligned_storage_t<sizeof(K), alignof(K)>;
+    using ValueBlock = std::aligned_storage_t<sizeof(V), alignof(V)>;
 
-    K keys[2 * B - 1];
-    V values[2 * B - 1];
+    KeyBlock __keys[2 * B - 1];
+    ValueBlock __values[2 * B - 1];
+
     NodePtr children[IsInternal ? (2 * B) : 0];
     NodePtr parent = nullptr;
     uint16_t usage = 0;
     uint16_t parent_idx = 0;
 
     using LocFlag = uint;
-
 
     inline NodePtr &node_parent() override {
         return parent;
@@ -276,11 +282,19 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
         };
     }
 
+    inline K* node_keys() override {
+        return reinterpret_cast<K *>(__keys);
+    };
+
+    inline V* node_values() override {
+        return reinterpret_cast<V *>(__values);
+    };
+
     NodePtr singleton(NodePtr l, NodePtr r, K key, V value) {
         auto node = new BTreeNode<K, V, true, Compare, B>;
         node->usage = 1;
-        new(node->values) V(std::move(value));  // no need for destroy, directly move
-        new(node->keys) K(std::move(key));
+        new (node->__values) V(std::move(value));  // no need for destroy, directly move
+        new (node->__keys) K(std::move(key));
         node->children[0] = l;
         l->node_idx() = 0;
         l->node_parent() = node;
@@ -553,11 +567,11 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
         return children[i];
     }
 
-    K &key_at(size_t i) override {
+    inline K &key_at(size_t i) override {
         return keys[i];
     }
 
-    V &value_at(size_t i) override {
+    inline V &value_at(size_t i) override {
         return values[i];
     }
 
@@ -653,4 +667,6 @@ using DefaultBTNode = BTreeNode<K, V, H>;
 template<typename K, typename V, size_t B, typename Compare>
 Compare AbstractBTNode<K, V, B, Compare>::comp{};
 
+#undef keys
+#undef values
 #endif
