@@ -36,6 +36,18 @@ inline void uninitialized_move_back(T* start, T* end) {
     }
 }
 
+template <typename T>
+inline void uninitialized_move_forward(T* start, T* end) {
+    if constexpr (std::is_trivial_v<T>) {
+        std::memmove(start - 1, start, (end - start) * sizeof(T));
+    } else {
+        for(auto i = start; i < end; ++i) {
+            new (i - 1) T(std::move(*i));
+            std::destroy_at(i);
+        }
+    }
+}
+
 template<typename K, typename V, size_t B = DEFAULT_BTREE_FACTOR, typename Compare = std::less<K>>
 class BTree;
 
@@ -389,8 +401,8 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
         ASSERT(from->node_usage() - 1 >= B - 1);
         ASSERT(usage + 1 >= B - 1);
 
-        std::move_backward(keys, keys + usage, keys + usage + 1);
-        std::move_backward(values, values + usage, values + usage + 1);
+        uninitialized_move_back(keys, keys + usage);
+        uninitialized_move_back(values, values + usage);
         if constexpr (IsInternal) {
             std::memmove(children + 1, children, (usage + 1) * sizeof(NodePtr));
             for(auto i = 1; i <= usage + 1; ++i) {
@@ -398,18 +410,20 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
             }
         }
         /* get node from parent */
-        values[0] = std::move(parent->value_at(parent_idx - 1)); // need destroy, cannot direct move construct
-        keys[0] = std::move(parent->key_at(parent_idx - 1));     // therefore, move assignment is called
+        new (values) V(std::move(parent->value_at(parent_idx - 1)));
+        new (keys) K(std::move(parent->key_at(parent_idx - 1)));
+        std::destroy_at(parent->values + parent_idx - 1);
+        std::destroy_at(parent->keys + parent_idx - 1);
         usage++;
 
         /* update_parent */
         auto from_usage = from->node_usage();
-        parent->value_at(parent_idx - 1) = std::move(from->value_at(from_usage - 1));
-        parent->key_at(parent_idx - 1) = std::move(from->key_at(from_usage - 1));
+        new (parent->values + parent_idx - 1) V(std::move(from->value_at(from_usage - 1)));
+        new (parent->keys + parent_idx - 1) K(std::move(from->key_at(from_usage - 1)));
 
         /* update from */
-        std::destroy_at(&from->value_at(from_usage - 1));
-        std::destroy_at(&from->key_at(from_usage - 1));
+        std::destroy_at(from->values + (from_usage - 1));
+        std::destroy_at(from->keys + (from_usage - 1));
         from->node_usage() -= 1;
 
         /* take the child */
@@ -435,7 +449,9 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
         /* update this node */
         new(values + usage) V(std::move(parent->value_at(parent_idx)));
         new(keys + usage) K(
-                std::move(parent->key_at(parent_idx))); // last element is uninitilized, direct move construct
+                std::move(parent->key_at(parent_idx))); // last element is uninitialized, direct move construct
+        std::destroy_at(parent->values + parent_idx);
+        std::destroy_at(parent->keys + parent_idx);
         if constexpr (IsInternal) {
             children[usage + 1] = from_node->children[0];
             children[usage + 1]->node_parent() = this;
@@ -444,12 +460,15 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
         usage++;
 
         /* update parent */
-        parent->value_at(parent_idx) = std::move(from_node->values[0]);
-        parent->key_at(parent_idx) = std::move(from_node->keys[0]);
+        new (parent->values + parent_idx) V(std::move(from_node->values[0]));
+        new (parent->keys + parent_idx) K(std::move(from_node->keys[0]));
+        std::destroy_at(from_node->values);
+        std::destroy_at(from_node->keys);
 
         /* update from node */
-        std::move(from_node->keys + 1, from_node->keys + from_node->usage, from_node->keys);
-        std::move(from_node->values + 1, from_node->values + from_node->usage, from_node->values);
+        uninitialized_move_forward(from_node->keys + 1, from_node->keys + from_node->usage);
+        uninitialized_move_forward(from_node->values + 1, from_node->values + from_node->usage);
+
         // memcpy should be good? but standards said UB if overlapped
         if constexpr (IsInternal) {
             std::memmove(from_node->children, from_node->children + 1, from_node->usage * sizeof(NodePtr));
@@ -458,8 +477,6 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
                 from_node->children[i]->node_idx() = i;
             }
         }
-        std::destroy_at(from_node->values + usage - 1);
-        std::destroy_at(from_node->keys + usage - 1);
         from_node->usage -= 1;
     }
 
@@ -476,21 +493,23 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
 
         new(left->values + left->usage) V(std::move(parent->values[left->parent_idx]));
         new(left->keys + left->usage) K(std::move(parent->keys[left->parent_idx]));
-        std::move(parent->values + right->parent_idx, parent->values + parent->usage,
-                  parent->values + left->parent_idx);
-        std::move(parent->keys + right->parent_idx, parent->keys + parent->usage, parent->keys + left->parent_idx);
+        std::destroy_at(parent->values + left->parent_idx);
+        std::destroy_at(parent->keys + left->parent_idx);
+        uninitialized_move_forward(parent->values + right->parent_idx, parent->values + parent->usage);
+        uninitialized_move_forward(parent->keys + right->parent_idx, parent->keys + parent->usage);
         std::memmove(parent->children + right->parent_idx, parent->children + right->parent_idx + 1,
                      (parent->usage - right->parent_idx) * sizeof(NodePtr));
         parent->children[parent->usage--] = nullptr;
         for (auto i = right->parent_idx; i <= parent->usage; ++i) {
             parent->children[i]->node_idx() = i;
         }
-        std::destroy_at(parent->keys + parent->usage);
-        std::destroy_at(parent->values + parent->usage);
 
         left->usage++;
         std::uninitialized_move(right->values, right->values + right->usage, left->values + left->usage);
         std::uninitialized_move(right->keys, right->keys + right->usage, left->keys + left->usage);
+        std::destroy(right->values, right->values + right->usage);
+        std::destroy(right->keys, right->keys + right->usage);
+
         if constexpr (IsInternal) {
             std::memcpy(left->children + left->usage, right->children, (right->usage + 1) * sizeof(NodePtr));
             for (auto i = left->usage; i <= left->usage + right->usage; ++i) {
@@ -498,8 +517,8 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
                 left->children[i]->node_parent() = left;
             }
         }
-        left->usage += right->usage;
 
+        left->usage += right->usage;
         right->usage = 0;
         delete right;
 
@@ -671,11 +690,11 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
             return pred.node->erase(pred.idx, root);
         } else {
             std::pair<K, V> result(std::move(keys[index]), std::move(values[index]));
-            std::move(keys + index + 1, keys + usage, keys + index);
-            std::move(values + index + 1, values + usage, values + index);
+            std::destroy_at(keys + index);
+            std::destroy_at(values + index);
+            uninitialized_move_forward(keys + index + 1, keys + usage);
+            uninitialized_move_forward(values + index + 1, values + usage);
             usage--;
-            std::destroy_at(keys + usage);
-            std::destroy_at(values + usage);
             fix_underflow(root);
             return result;
         }

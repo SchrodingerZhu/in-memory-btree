@@ -6,8 +6,8 @@
 #define DEFAULT_BTREE_FACTOR 6
 #include <btree.hpp>
 
-#define LIMIT 8000
-
+#define LIMIT 10000
+#define POP_LIMIT 5000
 struct Cell {
     static size_t ctor, dtor;
     char *tag;
@@ -45,13 +45,29 @@ size_t Cell::ctor = 0;
 size_t Cell::dtor = 0;
 
 int main() {
-    //auto seed = time(nullptr);
-    //std::cout << seed << std::endl;
-    srand(0);
+    auto seed = time(nullptr);
+    std::cout << seed << std::endl;
+    srand(seed);
     {
         BTree<int, Cell> test;
         for (int i = 0; i < LIMIT; ++i) {
             test.insert(rand(), Cell());
+        }
+    }
+    std::cout << "ctor: " << Cell::ctor << ", dtor: " << Cell::dtor << std::endl;
+    assert(Cell::ctor == Cell::dtor);
+
+    {
+        BTree<int, Cell> test;
+        for (int i = 0; i < LIMIT; ++i) {
+            test.insert(rand(), Cell());
+        }
+        for (int i = 0; i < POP_LIMIT; ++i) {
+            if (rand() & 1) {
+                test.pop_max();
+            } else {
+                test.pop_min();
+            }
         }
     }
     std::cout << "ctor: " << Cell::ctor << ", dtor: " << Cell::dtor << std::endl;
