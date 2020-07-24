@@ -137,6 +137,14 @@ public:
         return root->insert(key, value, &root);
     }
 
+    bool empty() {
+        return !root || root->node_usage() == 0;
+    }
+
+    bool member(const K& key) {
+        return root->member(key);
+    }
+
     const K &min_key() {
         auto iter = root->min();
         return iter.node->key_at(iter.idx);
@@ -211,11 +219,21 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
 
     inline LocFlag local_search(const K &key) {
         ASSERT(usage < 2 * B);
+#ifdef BINARY_SEARCH
         uint16_t position = std::lower_bound(keys, keys + usage, key, Node::comp) - keys;
         if (position != usage && !Node::comp(key, keys[position])) {
             return FOUND | position;
         }
         return GO_DOWN | position;
+#else
+        uint i = 0;
+        for (; i < usage && Node::comp(keys[i], key); ++i);
+        if (i == usage) return GO_DOWN | usage;
+        if (Node::comp(key, keys[i])) {
+            return GO_DOWN | i;
+        }
+        return FOUND | i;
+#endif
     }
 
     bool member(const K &key) override {

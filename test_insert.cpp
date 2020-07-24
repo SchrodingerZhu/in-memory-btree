@@ -1,7 +1,9 @@
 #include <vector>
+#include <random>
 #define DEBUG_MODE
 #include <btree.hpp>
 #define LIMIT 100000
+
 int main() {
     auto seed = time(nullptr);
     std::cout << seed << std::endl;
@@ -19,5 +21,9 @@ int main() {
         b.push_back(i.first);
     }
     assert(a == b);
+    std::random_shuffle(a.begin(), a.end());
+    for (auto i : a) {
+        assert(test.member(i));
+    }
     return 0;
 }
