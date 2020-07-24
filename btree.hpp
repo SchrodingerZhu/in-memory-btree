@@ -24,6 +24,18 @@
 #define ASSERT(x)
 #endif
 
+template <typename T>
+inline void uninitialized_move_back(T* start, T* end) {
+    if constexpr (std::is_trivial_v<T>) {
+        std::memmove(start + 1, start, (end - start) * sizeof(T));
+    } else {
+        for(auto i = end - 1; i >= start; --i) {
+            new (i + 1) T(std::move(*i));
+            std::destroy_at(i);
+        }
+    }
+}
+
 template<typename K, typename V, size_t B = DEFAULT_BTREE_FACTOR, typename Compare = std::less<K>>
 class BTree;
 
@@ -210,7 +222,10 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
     uint16_t parent_idx = 0;
 
     using LocFlag = uint;
-
+    BTreeNode() {
+        std::memset(__keys, 0, sizeof(KeyBlock) * (2 * B - 1));
+        std::memset(__values, 0, sizeof(ValueBlock) * (2 * B - 1));
+    }
     inline NodePtr &node_parent() override {
         return parent;
     }
@@ -263,6 +278,14 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
         std::uninitialized_move(keys + B, keys + usage, r->keys);
         std::uninitialized_move(values, values + B - 1, l->values);
         std::uninitialized_move(values + B, values + usage, r->values);
+        auto result = SplitResult{
+                .l = l,
+                .r = r,
+                .key = std::move(keys[B - 1]),
+                .value = std::move(values[B - 1]),
+        };
+        std::destroy(keys, keys + usage);
+        std::destroy(values, values + usage);
         this->usage = 0;
         if constexpr (IsInternal) {
             std::memcpy(l->children, children, B * sizeof(NodePtr));
@@ -274,12 +297,7 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
                 r->children[i]->node_idx() = i;
             }
         }
-        return SplitResult{
-                .l = l,
-                .r = r,
-                .key = std::move(keys[B - 1]),
-                .value = std::move(values[B - 1]),
-        };
+        return result;
     }
 
     inline K* node_keys() override {
@@ -308,17 +326,18 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
         auto res = local_search(key);
         if (res & FOUND) {
             V original = std::move(values[res & FOUND_MASK]);
-            values[res & FOUND_MASK] = value;
+            std::destroy_at(values + (res & FOUND_MASK));
+            new (values + (res & FOUND_MASK)) V(value);
             return {original};
         }
         auto position = res & GO_DOWN_MASK;
         if constexpr (IsInternal) {
             return children[position]->insert(key, value, root);
         } else {
-            std::move_backward(values + position, values + usage, values + usage + 1);
-            std::move_backward(keys + position, keys + usage, keys + usage + 1);
-            values[position] = value;
-            keys[position] = key;
+            uninitialized_move_back(values + position, values + usage);
+            uninitialized_move_back(keys + position, keys + usage);
+            new (values + position) V(value);
+            new (keys + position) K(key);
             usage++;
             if (usage == 2 * B - 1) /* leaf if full */ {
                 auto result = split();
@@ -334,8 +353,8 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
     }
 
     void adopt(NodePtr l, NodePtr r, K key, V value, size_t position, NodePtr *root) override {
-        std::move_backward(values + position, values + usage, values + usage + 1);
-        std::move_backward(keys + position, keys + usage, keys + usage + 1);
+        uninitialized_move_back(values + position, values + usage);
+        uninitialized_move_back(keys + position, keys + usage);
         std::memmove(children + position + 1, children + position,
                      (usage + 1 - position) * sizeof(NodePtr));
 
@@ -347,8 +366,8 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
         for (int i = position; i < usage + 2; ++i) {
             children[i]->node_idx() = i;
         }
-        values[position] = std::move(value);
-        keys[position] = std::move(key);
+        new (values + position) V(std::move(value));
+        new (keys + position) K(std::move(key));
         usage++;
         if (usage == 2 * B - 1) {
             auto result = split();
@@ -426,7 +445,7 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
 
         /* update parent */
         parent->value_at(parent_idx) = std::move(from_node->values[0]);
-        parent->key_at(parent_idx) = std::move(from_node->values[0]);
+        parent->key_at(parent_idx) = std::move(from_node->keys[0]);
 
         /* update from node */
         std::move(from_node->keys + 1, from_node->keys + from_node->usage, from_node->keys);
@@ -634,6 +653,8 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
     }
 
     ~BTreeNode() override {
+        std::destroy(keys, keys + usage);
+        std::destroy(values, values + usage);
         if constexpr(IsInternal) {
             if (usage)
                 for (auto i = 0; i <= usage; ++i) {
