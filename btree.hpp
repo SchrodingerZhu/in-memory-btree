@@ -1,5 +1,6 @@
-#include <iostream>
-#include <array>
+#ifndef BTREE_HPP
+#define BTREE_HPP
+
 #include <algorithm>
 #include <cstring>
 
@@ -7,9 +8,12 @@
 #define FOUND_MASK (FOUND - 1u)
 #define GO_DOWN (1u<<24u)
 #define GO_DOWN_MASK (GO_DOWN - 1u)
-#define DEBUG_MODE
+#ifndef DEFAULT_BTREE_FACTOR
+#define DEFAULT_BTREE_FACTOR 6
+#endif
 #ifdef DEBUG_MODE
 
+#include <iostream>
 #include <vector>
 #include <iomanip>
 #include <cassert>
@@ -19,13 +23,13 @@
 #define ASSERT(x)
 #endif
 
-template<typename K, typename V, size_t B = 6, typename Compare = std::less<K>>
+template<typename K, typename V, size_t B = DEFAULT_BTREE_FACTOR, typename Compare = std::less<K>>
 class BTree;
 
-template<typename K, typename V, size_t B = 6, typename Compare = std::less<K>>
+template<typename K, typename V, size_t B = DEFAULT_BTREE_FACTOR, typename Compare = std::less<K>>
 class AbstractBTNode;
 
-template<typename K, typename V, bool IsInternal, typename Compare = std::less<K>, size_t B = 6>
+template<typename K, typename V, bool IsInternal, typename Compare = std::less<K>, size_t B = DEFAULT_BTREE_FACTOR>
 struct alignas(64) BTreeNode;
 
 template<typename K, typename V, size_t B, typename Compare>
@@ -74,6 +78,8 @@ struct AbstractBTNode {
     virtual void
     adopt(AbstractBTNode *l, AbstractBTNode *r, K key, V value, size_t position, AbstractBTNode **root) = 0;
 
+    virtual void fix_underflow(AbstractBTNode **root) = 0;
+
     virtual AbstractBTNode *&node_parent() = 0;
 
     virtual uint16_t &node_idx() = 0;
@@ -88,9 +94,13 @@ struct AbstractBTNode {
 
     virtual iterator max() = 0;
 
-    virtual const K &key_at(size_t) = 0;
+    virtual K &key_at(size_t) = 0;
 
     virtual V &value_at(size_t) = 0;
+
+    virtual std::pair<K, V> erase(uint16_t index, AbstractBTNode **root) = 0;
+
+    virtual AbstractBTNode *&child_at(size_t) = 0;
 
     virtual ~AbstractBTNode() = default;
 
@@ -154,12 +164,25 @@ public:
         delete root;
     }
 
+    std::pair<K, V> erase(iterator iter) {
+        return iter.node->erase(iter.idx, &root);
+    }
+
+    std::pair<K, V> pop_min() {
+        auto iter = root->min();
+        return erase(iter);
+    }
+
+    std::pair<K, V> pop_max() {
+        auto iter = root->max();
+        return erase(iter);
+    }
 };
 
 template<typename K, typename V, bool IsInternal, typename Compare, size_t B>
 struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
     static_assert(2 * B < FOUND, "B is too large");
-    static_assert(B > 0, "B is too small");
+    static_assert(B > 2, "B is too small");
     using Node = AbstractBTNode<K, V, B, Compare>;
     using NodePtr = Node *;
     using SplitResult = typename AbstractBTNode<K, V, B, Compare>::SplitResult;
@@ -238,8 +261,8 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
     NodePtr singleton(NodePtr l, NodePtr r, K key, V value) {
         auto node = new BTreeNode<K, V, true, Compare, B>;
         node->usage = 1;
-        node->values[0] = std::move(value);
-        node->keys[0] = std::move(key);
+        new(node->values) V(std::move(value));  // no need for destroy, directly move
+        new(node->keys) K(std::move(key));
         node->children[0] = l;
         l->node_idx() = 0;
         l->node_parent() = node;
@@ -306,6 +329,159 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
         }
     }
 
+    void borrow_left(NodePtr from) {
+        ASSERT(dynamic_cast<BTreeNode *>(from));
+        ASSERT(parent); // root will never borrow
+        ASSERT(parent == dynamic_cast<BTreeNode *>(from)->parent);
+        ASSERT(parent_idx > 0);
+        ASSERT(parent_idx == from->node_idx() + 1);
+        ASSERT(from->node_usage() - 1 >= B - 1);
+        ASSERT(usage + 1 >= B - 1);
+
+        std::move_backward(keys, keys + usage, keys + usage + 1);
+        std::move_backward(values, values + usage, values + usage + 1);
+        if constexpr (IsInternal) {
+            std::memmove(children + 1, children, (usage + 1) * sizeof(NodePtr));
+            for(auto i = 1; i <= usage + 1; ++i) {
+                children[i]->node_idx() = i;
+            }
+        }
+        /* get node from parent */
+        values[0] = std::move(parent->value_at(parent_idx - 1)); // need destroy, cannot direct move construct
+        keys[0] = std::move(parent->key_at(parent_idx - 1));     // therefore, move assignment is called
+        usage++;
+
+        /* update_parent */
+        auto from_usage = from->node_usage();
+        parent->value_at(parent_idx - 1) = std::move(from->value_at(from_usage - 1));
+        parent->key_at(parent_idx - 1) = std::move(from->key_at(from_usage - 1));
+
+        /* update from */
+        std::destroy_at(&from->value_at(from_usage - 1));
+        std::destroy_at(&from->key_at(from_usage - 1));
+        from->node_usage() -= 1;
+
+        /* take the child */
+        if constexpr (IsInternal) {
+            children[0] = from->child_at(from_usage);
+            from->child_at(from_usage) = nullptr;
+            children[0]->node_idx() = 0;
+            children[0]->node_parent() = this;
+        }
+    }
+
+    void borrow_right(NodePtr from) {
+        ASSERT(dynamic_cast<BTreeNode *>(from));
+        ASSERT(parent); // root will never borrow
+        ASSERT(parent == dynamic_cast<BTreeNode *>(from)->parent);
+        ASSERT(parent_idx == 0); // only the first element call this
+        ASSERT(parent_idx < parent->node_usage());
+        ASSERT(parent_idx == from->node_idx() - 1);
+        ASSERT(from->node_usage() - 1 >= B - 1);
+        ASSERT(usage + 1 >= B - 1);
+
+        auto from_node = static_cast<BTreeNode *>(from);
+        /* update this node */
+        new(values + usage) V(std::move(parent->value_at(parent_idx)));
+        new(keys + usage) K(
+                std::move(parent->key_at(parent_idx))); // last element is uninitilized, direct move construct
+        if constexpr (IsInternal) {
+            children[usage + 1] = from_node->children[0];
+            children[usage + 1]->node_parent() = this;
+            children[usage + 1]->node_idx() = usage + 1;
+        }
+        usage++;
+
+        /* update parent */
+        parent->value_at(parent_idx) = std::move(from_node->values[0]);
+        parent->key_at(parent_idx) = std::move(from_node->values[0]);
+
+        /* update from node */
+        std::move(from_node->keys + 1, from_node->keys + from_node->usage, from_node->keys);
+        std::move(from_node->values + 1, from_node->values + from_node->usage, from_node->values);
+        // memcpy should be good? but standards said UB if overlapped
+        if constexpr (IsInternal) {
+            std::memmove(from_node->children, from_node->children + 1, from_node->usage * sizeof(NodePtr));
+            from_node->children[from_node->usage] = nullptr;
+            for (auto i = 0; i < from_node->usage; ++i) {
+                from_node->children[i]->node_idx() = i;
+            }
+        }
+        std::destroy_at(from_node->values + usage - 1);
+        std::destroy_at(from_node->keys + usage - 1);
+        from_node->usage -= 1;
+    }
+
+    static void merge(NodePtr a, NodePtr b, NodePtr *root) {
+        auto left = static_cast<BTreeNode *>(a);
+        auto right = static_cast<BTreeNode *>(b);
+        auto parent = static_cast<BTreeNode<K, V, true, Compare> *>(left->parent);
+        ASSERT(dynamic_cast<BTreeNode *>(a));
+        ASSERT(dynamic_cast<BTreeNode *>(b));
+        ASSERT((dynamic_cast <BTreeNode<K, V, true, Compare> *> (left->parent))); // root will never borrow
+        ASSERT(left->parent == right->parent);
+        ASSERT(left->parent_idx == right->node_idx() - 1);
+        ASSERT(left->usage + right->usage + 1 < 2 * B - 1);
+
+        new(left->values + left->usage) V(std::move(parent->values[left->parent_idx]));
+        new(left->keys + left->usage) K(std::move(parent->keys[left->parent_idx]));
+        std::move(parent->values + right->parent_idx, parent->values + parent->usage,
+                  parent->values + left->parent_idx);
+        std::move(parent->keys + right->parent_idx, parent->keys + parent->usage, parent->keys + left->parent_idx);
+        std::memmove(parent->children + right->parent_idx, parent->children + right->parent_idx + 1,
+                     (parent->usage - right->parent_idx) * sizeof(NodePtr));
+        parent->children[parent->usage--] = nullptr;
+        for (auto i = right->parent_idx; i <= parent->usage; ++i) {
+            parent->children[i]->node_idx() = i;
+        }
+        std::destroy_at(parent->keys + parent->usage);
+        std::destroy_at(parent->values + parent->usage);
+
+        left->usage++;
+        std::uninitialized_move(right->values, right->values + right->usage, left->values + left->usage);
+        std::uninitialized_move(right->keys, right->keys + right->usage, left->keys + left->usage);
+        if constexpr (IsInternal) {
+            std::memcpy(left->children + left->usage, right->children, (right->usage + 1) * sizeof(NodePtr));
+            for (auto i = left->usage; i <= left->usage + right->usage; ++i) {
+                left->children[i]->node_idx() = i;
+                left->children[i]->node_parent() = left;
+            }
+        }
+        left->usage += right->usage;
+
+        right->usage = 0;
+        delete right;
+
+        if (parent->usage == 0) /* only possible at root or B == 2 */ {
+            ASSERT(parent == *root );
+            parent->usage = 0;
+            left->parent = nullptr;
+            *root = left;
+            return;
+        }
+
+        parent->fix_underflow(root);
+    }
+
+    void fix_underflow(NodePtr *root) override {
+        if (usage >= B - 1 || !parent) return;
+        if (parent_idx) {
+            auto target = parent->child_at(parent_idx - 1);
+            if (target->node_usage() > B - 1) {
+                borrow_left(target);
+            } else {
+                merge(target, this, root);
+            }
+        } else {
+            auto target = parent->child_at(parent_idx + 1);
+            if (target->node_usage() > B - 1) {
+                borrow_right(target);
+            } else {
+                merge(this, target, root);
+            }
+        }
+    }
+
 #ifdef DEBUG_MODE
 
     void display(size_t ident) override {
@@ -355,13 +531,17 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
         }
     }
 
-    const K &key_at(size_t i) override {
+    NodePtr &child_at(size_t i) override {
+        return children[i];
+    }
+
+    K &key_at(size_t i) override {
         return keys[i];
-    };
+    }
 
     V &value_at(size_t i) override {
         return values[i];
-    };
+    }
 
     typename Node::iterator predecessor(uint16_t idx) override {
         if constexpr (IsInternal) {
@@ -429,6 +609,24 @@ struct alignas(64) BTreeNode : AbstractBTNode<K, V, B, Compare> {
                 }
         }
     }
+
+    std::pair<K, V> erase(uint16_t index, NodePtr *root) override {
+        if constexpr (IsInternal) {
+            auto pred = children[index]->max();
+            std::swap(keys[index], pred.node->key_at(pred.idx));
+            std::swap(values[index], pred.node->value_at(pred.idx));
+            return pred.node->erase(pred.idx, root);
+        } else {
+            std::pair<K, V> result(std::move(keys[index]), std::move(values[index]));
+            std::move(keys + index + 1, keys + usage, keys + index);
+            std::move(values + index + 1, values + usage, values + index);
+            usage--;
+            std::destroy_at(keys + usage);
+            std::destroy_at(values + usage);
+            fix_underflow(root);
+            return result;
+        }
+    }
 };
 
 template<class K, class V, size_t H>
@@ -437,20 +635,4 @@ using DefaultBTNode = BTreeNode<K, V, H>;
 template<typename K, typename V, size_t B, typename Compare>
 Compare AbstractBTNode<K, V, B, Compare>::comp{};
 
-int main() {
-    std::vector<int> a, b;
-    BTree<int, int> test;
-    for (int i = 0; i < 100000; ++i) {
-        auto k = rand();
-        a.push_back(k);
-        test.insert(k, k);
-    }
-    std::sort(a.begin(), a.end());
-    a.erase(unique(a.begin(), a.end()), a.end());
-    for (auto i : test) {
-        b.push_back(i.first);
-    }
-    assert(a == b);
-    //test.display();
-    return 0;
-}
+#endif
