@@ -65,7 +65,7 @@ namespace btree {
         template<typename K, typename V, size_t B, typename Compare>
         struct AbstractBTNode {
 
-            static Compare comp;
+            Compare& comp;
 
             struct SplitResult {
                 AbstractBTNode *l, *r;
@@ -81,7 +81,7 @@ namespace btree {
                     return idx != that.idx || node != that.node;
                 }
 
-#if __cplusplus < 201907
+#if ! __cpp_lib_three_way_comparison
                 inline bool operator==(const iterator &that) noexcept {
                     return idx == that.idx && node == that.node;
                 }
@@ -101,6 +101,8 @@ namespace btree {
                     return {node->key_at(idx), node->value_at(idx)};
                 }
             };
+
+            AbstractBTNode(Compare& comp) : comp(comp) {}
 
             virtual bool member(const K &key) = 0;
 
@@ -168,7 +170,7 @@ namespace btree {
 
             using LocFlag = uint;
 
-            BTreeNode() {
+            BTreeNode(Compare& comp) : Node(comp) {
                 std::memset(__keys, 0, sizeof(KeyBlock) * (2 * B - 1));
                 std::memset(__values, 0, sizeof(ValueBlock) * (2 * B - 1));
             }
@@ -188,7 +190,7 @@ namespace btree {
             inline LocFlag local_search(const K &key) {
                 ASSERT(usage < 2 * B);
 #ifdef BINARY_SEARCH
-                uint16_t position = std::lower_bound(keys, keys + usage, key, Node::comp) - keys;
+                uint16_t position = std::lower_bound(keys, keys + usage, key, [this] (const K& a, const K& b) { return this->comp(a, b); }) - keys;
                 if (position != usage && !Node::comp(key, keys[position])) {
                     return FOUND | position;
                 }
@@ -197,7 +199,7 @@ namespace btree {
                 uint i = 0;
         for (; i < usage && Node::comp(keys[i], key); ++i);
         if (i == usage) return GO_DOWN | usage;
-        if (Node::comp(key, keys[i])) {
+        if (this->comp(key, keys[i])) {
             return GO_DOWN | i;
         }
         return FOUND | i;
@@ -217,8 +219,8 @@ namespace btree {
 
             typename Node::SplitResult split() {
                 ASSERT(usage == 2 * B - 1);
-                auto l = new BTreeNode;
-                auto r = new BTreeNode;
+                auto l = new BTreeNode(this->comp);
+                auto r = new BTreeNode(this->comp);
                 l->usage = r->usage = B - 1;
                 l->parent = r->parent = this->parent;
                 std::uninitialized_move(keys, keys + B - 1, l->keys);
@@ -256,7 +258,7 @@ namespace btree {
             };
 
             NodePtr singleton(NodePtr l, NodePtr r, K key, V value) {
-                auto node = new BTreeNode<K, V, true, Compare, B>;
+                auto node = new BTreeNode<K, V, true, Compare, B>(this->comp);
                 node->usage = 1;
                 new(node->__values) V(std::move(value));  // no need for destroy, directly move
                 new(node->__keys) K(std::move(key));
@@ -638,8 +640,6 @@ namespace btree {
             }
         };
 
-        template<typename K, typename V, size_t B, typename Compare>
-        Compare AbstractBTNode<K, V, B, Compare>::comp{};
     }
 
     template<typename K, typename V, size_t B, typename Compare>
@@ -648,7 +648,14 @@ namespace btree {
         using Node = __btree_impl::AbstractBTNode<K, V, B, Compare>;
 
         Node *root = nullptr;
+
+        Compare comp;
     public:
+
+        BTree(Compare comp = Compare()) : comp(comp) {
+
+        }
+
         using iterator = typename Node::iterator;
 #ifdef DEBUG_MODE
 
@@ -659,7 +666,7 @@ namespace btree {
 
         std::optional<V> insert(const K &key, const V &value) {
             if (root == nullptr) {
-                auto node = new __btree_impl::BTreeNode<K, V, false, Compare, B>;
+                auto node = new __btree_impl::BTreeNode<K, V, false, Compare, B>(comp);
                 node->usage = 1;
                 new(node->__keys) K(key);
                 new(node->__values) V(value);
