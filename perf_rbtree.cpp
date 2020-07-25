@@ -53,7 +53,6 @@ int main() {
     {
         auto limit = 10'000'000;
         std::cout << limit << " insertions (btree)" << std::endl;
-        auto rng = Rng();
         timeit([&] {
             BTree<int, int> tester;
             for (int i = 0; i < limit; ++i) {
@@ -81,7 +80,6 @@ int main() {
     {
         auto limit = 10'000'000;
         std::cout << limit << " membership (btree)" << std::endl;
-        auto rng = Rng();
         BTree<int, int> tester;
         for (int i = 0; i < limit; ++i) {
             tester.insert(data[i], data[i]);
@@ -140,7 +138,6 @@ int main() {
     {
         auto limit = 10'000'000;
         std::cout << limit << " iterate through (btree)" << std::endl;
-        auto rng = Rng();
         BTree<int, int> tester;
         for (int i = 0; i < limit; ++i) {
             tester.insert(data[i], data[i]);
@@ -154,4 +151,29 @@ int main() {
         });
     }
     if (A != B) std::abort();
+
+    {
+        auto limit = 10'000'000;
+        std::cout << limit << " copy construct (map)" << std::endl;
+        std::map<int, int> tester;
+        for (int i = 0; i < limit; ++i) {
+            tester.insert({data[i], data[i]});
+        }
+        timeit([&] {
+            auto another = tester;
+        });
+    }
+    {
+        auto limit = 10'000'000;
+        std::cout << limit << " copy construct (btree)" << std::endl;
+        BTree<int, int> tester;
+        for (int i = 0; i < limit; ++i) {
+            tester.insert(data[i], data[i]);
+        }
+        timeit([&] {
+            auto another = tester;
+        });
+    }
+
+
 }

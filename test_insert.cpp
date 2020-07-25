@@ -5,7 +5,8 @@
 
 #include <btree.hpp>
 
-#define LIMIT 100000
+#define LIMIT 20000
+#define TEST(x) if (!(x)) std::abort();
 using namespace btree;
 
 int main() {
@@ -24,16 +25,24 @@ int main() {
     for (auto i : test) {
         b.push_back(i.first);
     }
-    assert(a == b);
+    TEST(a == b);
+    {
+        auto copied = test;
+        std::vector<int> c;
+        for (auto i : copied) {
+            c.push_back(i.first);
+        }
+        TEST(a == b);
+    }
     for (int i = 0; i < LIMIT; ++i) {
         auto target = rand();
         auto A = std::binary_search(a.begin(), a.end(), target);
         auto B = test.member(target);
-        assert(A == B);
+        TEST(A == B);
     }
     std::random_shuffle(a.begin(), a.end());
     for (auto i : a) {
-        assert(test.member(i));
+        TEST(test.member(i));
     }
     return 0;
 }

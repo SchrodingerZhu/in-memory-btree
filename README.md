@@ -60,5 +60,12 @@ microsecs: 944876
 microsecs: 168292
 ```
 
-
+### Updadte for Copy Construction
+I wrote a tail recursive copy constuctor for btree.
+```
+10000000 copy construct (map)
+microsecs: 1108715
+10000000 copy construct (btree)
+microsecs: 442854
+```
 
