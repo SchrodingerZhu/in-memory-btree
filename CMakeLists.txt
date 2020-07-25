@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(bt)
 set(CMAKE_CXX_STANDARD 20)
-
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fmodules-ts -Wall -Wextra -Werror")
 include_directories(.)
 enable_testing()
 add_executable(test-insert test_insert.cpp)

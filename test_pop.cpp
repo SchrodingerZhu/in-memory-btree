@@ -28,7 +28,7 @@ int main() {
             auto iter0 = a.begin();
             auto iter1 = test.begin();
             std::advance(iter0, step);
-            for (int i = 0; i < step; ++i, ++iter1);
+            for (unsigned i = 0; i < step; ++i, ++iter1);
             a.erase(iter0);
             test.erase(iter1);
         }

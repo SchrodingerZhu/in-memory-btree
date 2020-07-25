@@ -33,7 +33,7 @@ namespace btree {
     namespace __btree_impl {
 
         template<typename K, typename V, size_t B = DEFAULT_BTREE_FACTOR, typename Compare = std::less<K>>
-        class AbstractBTNode;
+        struct AbstractBTNode;
 
         template<typename K, typename V, bool IsInternal, typename Compare = std::less<K>, size_t B = DEFAULT_BTREE_FACTOR>
         struct alignas(64) BTreeNode;
@@ -77,14 +77,15 @@ namespace btree {
                 uint16_t idx;
                 AbstractBTNode *node;
 
-                bool operator==(const iterator &that) noexcept {
-                    return idx == that.idx && node == that.node;
-                }
-
-                bool operator!=(const iterator &that) noexcept {
+                inline bool operator!=(const iterator &that) noexcept {
                     return idx != that.idx || node != that.node;
                 }
 
+#if __cplusplus < 201907
+                inline bool operator==(const iterator &that) noexcept {
+                    return idx == that.idx && node == that.node;
+                }
+#endif
                 iterator operator++(int) {
                     return node->successor(idx);
                 }
@@ -497,7 +498,7 @@ namespace btree {
                 std::cout << idents << "node at " << this << ", parent: " << parent << ", index: " << parent_idx
                           << ", fields: ";
                 {
-                    auto i = 0;
+                    unsigned i = 0;
                     for (; i < usage; ++i) {
                         std::cout << " " << std::setw(4) << keys[i];
                     }
@@ -515,7 +516,7 @@ namespace btree {
 
 #endif
 
-            typename Node::iterator min() {
+            typename Node::iterator min() override {
                 if constexpr(IsInternal) {
                     return children[0]->min();
                 } else {
@@ -526,7 +527,7 @@ namespace btree {
                 }
             }
 
-            typename Node::iterator max() {
+            typename Node::iterator max() override {
                 if constexpr(IsInternal) {
                     return children[usage]->max();
                 } else {
