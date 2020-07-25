@@ -4,10 +4,14 @@
 #define DEBUG_MODE
 #define BINARY_SEARCH
 #define DEFAULT_BTREE_FACTOR 6
+
 #include <btree.hpp>
 
 #define LIMIT 10000
 #define POP_LIMIT 5000
+
+using namespace btree;
+
 struct Cell {
     static size_t ctor, dtor;
     char *tag;

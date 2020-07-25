@@ -7,6 +7,7 @@
 
 #define LIMIT 20000
 #define POP_LIMIT 10000
+using namespace btree;
 
 int main() {
     auto seed = time(nullptr);
@@ -27,7 +28,7 @@ int main() {
             auto iter0 = a.begin();
             auto iter1 = test.begin();
             std::advance(iter0, step);
-            for(int i = 0; i < step; ++i, ++iter1);
+            for (int i = 0; i < step; ++i, ++iter1);
             a.erase(iter0);
             test.erase(iter1);
         }

@@ -1,8 +1,12 @@
 #include <vector>
 #include <random>
+
 #define DEBUG_MODE
+
 #include <btree.hpp>
+
 #define LIMIT 100000
+using namespace btree;
 
 int main() {
     auto seed = time(nullptr);
@@ -21,7 +25,7 @@ int main() {
         b.push_back(i.first);
     }
     assert(a == b);
-    for (int i = 0; i <  LIMIT; ++i) {
+    for (int i = 0; i < LIMIT; ++i) {
         auto target = rand();
         auto A = std::binary_search(a.begin(), a.end(), target);
         auto B = test.member(target);

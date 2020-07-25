@@ -9,7 +9,7 @@
 
 #define LIMIT 200000
 #define SEED 0x114514
-
+using namespace btree;
 template<typename F, typename... Args>
 void timeit(F f, Args &&... args) {
     auto start = std::chrono::high_resolution_clock::now();
