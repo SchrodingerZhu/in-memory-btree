@@ -1,12 +1,17 @@
 #include <deque>
 
 #define DEBUG_MODE
-#define DEFAULT_BTREE_FACTOR 6
+#define DEFAULT_BTREE_FACTOR 3
 
 #include <btree.hpp>
 
 #define LIMIT 20000
-#define POP_LIMIT 10000
+#define POP_LIMIT 20000
+#ifndef __OPTIMIZE__
+#define TEST(x) assert((x))
+#else
+#define TEST(x) if (!(x)) std::abort();
+#endif
 using namespace btree;
 
 int main() {
@@ -23,6 +28,7 @@ int main() {
         }
         std::sort(a.begin(), a.end());
         a.erase(unique(a.begin(), a.end()), a.end());
+        TEST(test.size() == a.size());
         for (auto i = 0; i < POP_LIMIT; ++i) {
             auto step = rand() % a.size();
             auto iter0 = a.begin();
@@ -31,12 +37,14 @@ int main() {
             for (unsigned i = 0; i < step; ++i, ++iter1);
             a.erase(iter0);
             test.erase(iter1);
+            TEST(a.size() == test.size());
         }
         for (auto i : test) {
             b.push_back(i.first);
         }
-        assert(a == b);
+        TEST(a == b);
     }
+    TEST(alive_node == 0);
     {
         std::deque<int> a, b;
         BTree<int, int> test;
@@ -47,16 +55,17 @@ int main() {
         }
         std::sort(a.begin(), a.end());
         a.erase(unique(a.begin(), a.end()), a.end());
-        for (auto i = 0; i < POP_LIMIT; ++i) {
+        while (test.size()) {
             a.pop_front();
             test.pop_min();
+            TEST(a.size() == test.size());
         }
         for (auto i : test) {
             b.push_back(i.first);
         }
-        assert(a == b);
+        TEST(a == b);
     }
-
+    TEST(alive_node == 0);
     {
         std::vector<int> a, b;
         BTree<int, int> test;
@@ -67,14 +76,16 @@ int main() {
         }
         std::sort(a.begin(), a.end());
         a.erase(unique(a.begin(), a.end()), a.end());
-        for (auto i = 0; i < POP_LIMIT; ++i) {
+        while (test.size()) {
             a.pop_back();
             test.pop_max();
+            TEST(a.size() == test.size());
         }
         for (auto i : test) {
             b.push_back(i.first);
         }
-        assert(a == b);
+        TEST(a == b);
     }
+    TEST(alive_node == 0);
     return 0;
 }

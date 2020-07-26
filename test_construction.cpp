@@ -2,27 +2,29 @@
 #include <random>
 
 #define DEBUG_MODE
-#define BINARY_SEARCH
+
 #define DEFAULT_BTREE_FACTOR 6
 
 #include <btree.hpp>
-
-#define LIMIT 10000
-#define POP_LIMIT 5000
+#include <set>
+#define LIMIT 20000
+#define POP_LIMIT 20000
 
 using namespace btree;
 
 struct Cell {
-    static size_t ctor, dtor;
+    static size_t ctor, dtor, alive;
     char *tag;
 
     Cell() {
         ctor++;
+        alive++;
         tag = new char;
     }
 
     Cell(const Cell &) {
         ctor++;
+        alive++;
         tag = new char;
     }
 
@@ -34,6 +36,7 @@ struct Cell {
 
     Cell &operator=(Cell &&that) {
         delete (tag);
+        alive -= (tag != nullptr);
         tag = that.tag;
         that.tag = nullptr;
         return *this;
@@ -41,32 +44,40 @@ struct Cell {
 
     ~Cell() {
         dtor++;
+        alive -= (tag != nullptr);
         delete (tag);
     }
 };
 
 size_t Cell::ctor = 0;
 size_t Cell::dtor = 0;
+size_t Cell::alive = 0;
 
-int main() {
-    auto seed = time(nullptr);
+int main(int argc, char** argv) {
+    auto seed = argc > 1 ? std::atoi(argv[1]) : time(nullptr);
     std::cout << seed << std::endl;
     srand(seed);
     {
         BTree<int, Cell> test;
+        std::set<int> u;
         for (int i = 0; i < LIMIT; ++i) {
-            test.insert(rand(), Cell());
+            auto k = rand();
+            test.insert(k, Cell());
+            u.insert(k);
+            assert(Cell::alive == u.size());
         }
+
     }
     std::cout << "ctor: " << Cell::ctor << ", dtor: " << Cell::dtor << std::endl;
     assert(Cell::ctor == Cell::dtor);
-
+    assert(alive_node == 0);
+    assert(Cell::alive == 0);
     {
         BTree<int, Cell> test;
         for (int i = 0; i < LIMIT; ++i) {
             test.insert(rand(), Cell());
         }
-        for (int i = 0; i < POP_LIMIT; ++i) {
+        while (!test.empty()) {
             if (rand() & 1) {
                 test.pop_max();
             } else {
@@ -76,4 +87,6 @@ int main() {
     }
     std::cout << "ctor: " << Cell::ctor << ", dtor: " << Cell::dtor << std::endl;
     assert(Cell::ctor == Cell::dtor);
+    assert(alive_node == 0);
+    assert(Cell::alive == 0);
 }

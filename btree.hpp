@@ -25,6 +25,10 @@
 #define ASSERT(x)
 #endif
 
+#ifdef DEBUG_MODE
+static size_t alive_node = 0;
+#endif
+
 namespace btree {
 
     template<typename K, typename V, bool UseBinary = true, size_t B = DEFAULT_BTREE_FACTOR, typename Compare = std::less<K>>
@@ -40,6 +44,7 @@ namespace btree {
 
         template<typename T>
         inline void uninitialized_move_back(T *start, T *end) {
+            ASSERT(end >= start);
             if constexpr (std::is_trivial_v<T>) {
                 std::memmove(start + 1, start, (end - start) * sizeof(T));
             } else {
@@ -52,6 +57,7 @@ namespace btree {
 
         template<typename T>
         inline void uninitialized_move_forward(T *start, T *end) {
+            ASSERT(end >= start);
             if constexpr (std::is_trivial_v<T>) {
                 std::memmove(start - 1, start, (end - start) * sizeof(T));
             } else {
@@ -140,9 +146,9 @@ namespace btree {
 
             virtual AbstractBTNode *&child_at(size_t) = 0;
 
-            virtual void traversal_copy(AbstractBTNode* now, Compare& new_comp) = 0;
+            virtual void traversal_copy(AbstractBTNode *now, Compare &new_comp) = 0;
 
-            virtual AbstractBTNode *same_type(Compare& new_comp) = 0;
+            virtual AbstractBTNode *same_type(Compare &new_comp) = 0;
 
             virtual ~AbstractBTNode() = default;
 
@@ -176,8 +182,11 @@ namespace btree {
             using LocFlag = uint;
 
             BTreeNode(Compare &comp) : Node(comp) {
-                std::memset(__keys, 0, sizeof(KeyBlock) * (2 * B - 1));
-                std::memset(__values, 0, sizeof(ValueBlock) * (2 * B - 1));
+#ifdef DEBUG_MODE
+                alive_node++;
+#endif
+                std::memset(__keys, 0, sizeof(__keys));
+                std::memset(__values, 0, sizeof(__values));
             }
 
             inline NodePtr &node_parent() override {
@@ -262,11 +271,11 @@ namespace btree {
                 return reinterpret_cast<V *>(__values);
             };
 
-            inline NodePtr same_type(Compare& new_comp) override {
+            inline NodePtr same_type(Compare &new_comp) override {
                 return new BTreeNode(new_comp);
             };
 
-            inline void traversal_moveup(NodePtr now, Compare& new_comp) {
+            inline void traversal_moveup(NodePtr now, Compare &new_comp) {
                 std::uninitialized_copy(keys, keys + usage, now->keys);
                 std::uninitialized_copy(values, values + usage, now->values);
                 now->node_usage() = usage;
@@ -284,8 +293,8 @@ namespace btree {
                 return parent->traversal_copy(new_parent, new_comp);
             }
 
-            void traversal_copy(NodePtr now, Compare& new_comp) override {
-                ASSERT(dynamic_cast<BTreeNode*>(now)); // must of the same type
+            void traversal_copy(NodePtr now, Compare &new_comp) override {
+                ASSERT(dynamic_cast<BTreeNode *>(now)); // must of the same type
                 if constexpr (IsInternal) {
                     if (usage + 1 == now->node_usage()) {
                         return traversal_moveup(now, new_comp);
@@ -298,8 +307,8 @@ namespace btree {
                 }
             };
 
-            NodePtr singleton(NodePtr l, NodePtr r, K key, V value) {
-                auto node = new BTreeNode<K, V, true, UseBinary, Compare, B>(this->comp);
+            static NodePtr singleton(NodePtr l, NodePtr r, K key, V value, Compare& _comp) {
+                auto node = new BTreeNode<K, V, true, UseBinary, Compare, B>(_comp);
                 node->usage = 1;
                 new(node->__values) V(std::move(value));  // no need for destroy, directly move
                 new(node->__keys) K(std::move(key));
@@ -335,8 +344,9 @@ namespace btree {
                             parent->adopt(result.l, result.r, std::move(result.key), std::move(result.value),
                                           parent_idx, root);
                         else {
+                            auto node = singleton(result.l, result.r, std::move(result.key), std::move(result.value), this->comp);
                             delete *root;
-                            *root = singleton(result.l, result.r, std::move(result.key), std::move(result.value));
+                            *root = node;
                         }
                     }
                     return std::nullopt;
@@ -346,9 +356,9 @@ namespace btree {
             void adopt(NodePtr l, NodePtr r, K key, V value, size_t position, NodePtr *root) override {
                 uninitialized_move_back(values + position, values + usage);
                 uninitialized_move_back(keys + position, keys + usage);
-                std::memmove(children + position + 1, children + position,
-                             (usage + 1 - position) * sizeof(NodePtr));
                 if constexpr (IsInternal) {
+                    std::memmove(children + position + 1, children + position,
+                                 (usage + 1 - position) * sizeof(NodePtr));
                     delete (children[position]);
                     children[position] = l;
                     l->node_parent() = this;
@@ -367,12 +377,12 @@ namespace btree {
                         parent->adopt(result.l, result.r, std::move(result.key), std::move(result.value), parent_idx,
                                       root);
                     } else {
+                        auto node = singleton(result.l, result.r, std::move(result.key), std::move(result.value), this->comp);
                         delete *root;
-                        *root = singleton(result.l, result.r, std::move(result.key), std::move(result.value));
+                        *root = node;
                     }
                 }
             }
-
 
 
             void borrow_left(NodePtr from) {
@@ -386,12 +396,7 @@ namespace btree {
 
                 uninitialized_move_back(keys, keys + usage);
                 uninitialized_move_back(values, values + usage);
-                if constexpr (IsInternal) {
-                    std::memmove(children + 1, children, (usage + 1) * sizeof(NodePtr));
-                    for (auto i = 1; i <= usage + 1; ++i) {
-                        children[i]->node_idx() = i;
-                    }
-                }
+
                 /* get node from parent */
                 new(values) V(std::move(parent->value_at(parent_idx - 1)));
                 new(keys) K(std::move(parent->key_at(parent_idx - 1)));
@@ -403,7 +408,6 @@ namespace btree {
                 auto from_usage = from->node_usage();
                 new(parent->values + parent_idx - 1) V(std::move(from->value_at(from_usage - 1)));
                 new(parent->keys + parent_idx - 1) K(std::move(from->key_at(from_usage - 1)));
-
                 /* update from */
                 std::destroy_at(from->values + (from_usage - 1));
                 std::destroy_at(from->keys + (from_usage - 1));
@@ -411,10 +415,14 @@ namespace btree {
 
                 /* take the child */
                 if constexpr (IsInternal) {
+                    std::memmove(children + 1, children, usage * sizeof(NodePtr));
                     children[0] = from->child_at(from_usage);
                     from->child_at(from_usage) = nullptr;
                     children[0]->node_idx() = 0;
                     children[0]->node_parent() = this;
+                    for (auto i = 1; i <= usage; ++i) {
+                        children[i]->node_idx() = i;
+                    }
                 }
             }
 
@@ -483,9 +491,7 @@ namespace btree {
                 std::memmove(parent->children + right->parent_idx, parent->children + right->parent_idx + 1,
                              (parent->usage - right->parent_idx) * sizeof(NodePtr));
                 parent->children[parent->usage--] = nullptr;
-                for (auto i = right->parent_idx; i <= parent->usage; ++i) {
-                    parent->children[i]->node_idx() = i;
-                }
+
 
                 left->usage++;
                 std::uninitialized_move(right->values, right->values + right->usage, left->values + left->usage);
@@ -505,9 +511,14 @@ namespace btree {
                 right->usage = 0;
                 delete right;
 
+                for (auto i = left->parent_idx; i <= parent->usage; ++i) {
+                    parent->children[i]->node_idx() = i;
+                }
+
                 if (parent->usage == 0) /* only possible at root or B == 2 */ {
                     ASSERT(parent == *root);
                     parent->usage = 0;
+                    delete(parent);
                     left->parent = nullptr;
                     *root = left;
                     return;
@@ -541,8 +552,6 @@ namespace btree {
                 std::string idents(ident ? ident - 1 : 0, '-');
                 if (ident) idents.push_back('>');
                 if (ident) idents.push_back(' ');
-                std::cout << idents << "node at " << this << ", parent: " << parent << ", index: " << parent_idx
-                          << ", fields: ";
                 {
                     unsigned i = 0;
                     for (; i < usage; ++i) {
@@ -659,6 +668,9 @@ namespace btree {
             }
 
             ~BTreeNode() override {
+#ifdef DEBUG_MODE
+                alive_node--;
+#endif
                 std::destroy(keys, keys + usage);
                 std::destroy(values, values + usage);
                 if constexpr(IsInternal) {
@@ -694,7 +706,7 @@ namespace btree {
     class BTree {
 
         using Node = __btree_impl::AbstractBTNode<K, V, UseBinary, B, Compare>;
-
+        size_t _size = 0;
         Node *root = nullptr;
 
         Compare comp;
@@ -702,13 +714,15 @@ namespace btree {
 
         BTree(Compare comp = Compare()) : comp(comp) {}
 
-        BTree(BTree&& that) noexcept(Compare(std::move(comp))) {
+        BTree(BTree &&that) noexcept(Compare(std::move(comp))) {
             root = that.root;
+            _size = that._size;
             comp = std::move(that.comp);
         }
 
-        BTree(const BTree& that) {
+        BTree(const BTree &that) {
             comp = that.comp;
+            _size = that._size;
             if (that.root == nullptr) {
                 root = nullptr;
                 return;
@@ -733,31 +747,34 @@ namespace btree {
                 new(node->__keys) K(key);
                 new(node->__values) V(value);
                 root = node;
+                _size++;
                 return std::nullopt;
             }
-            return root->insert(key, value, &root);
+            auto res = root->insert(key, value, &root);
+            if(!res) _size++;
+            return res;
         }
 
         bool empty() {
-            return !root || root->node_usage() == 0;
+            return _size == 0;
         }
 
         bool member(const K &key) {
             return root && root->member(key);
         }
 
-        const K & min_key() {
+        const K &min_key() {
             auto iter = root->min();
             return iter.node->key_at(iter.idx);
         }
 
-        const K & max_key() {
+        const K &max_key() {
             auto iter = root->max();
             return iter.node->key_at(iter.idx);
         }
 
         iterator begin() {
-            if (root)
+            if (_size)
                 return root->min();
             return end();
         }
@@ -774,6 +791,7 @@ namespace btree {
         }
 
         std::pair<K, V> erase(iterator iter) {
+            _size --;
             return iter.node->erase(iter.idx, &root);
         }
 
@@ -785,6 +803,10 @@ namespace btree {
         std::pair<K, V> pop_max() {
             auto iter = root->max();
             return erase(iter);
+        }
+
+        size_t size() {
+            return _size;
         }
     };
 }
