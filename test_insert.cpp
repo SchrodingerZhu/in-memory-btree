@@ -7,11 +7,7 @@
 #include <btree.hpp>
 
 #define LIMIT 20
-#ifndef __OPTIMIZE__
-#define TEST(x) assert((x))
-#else
-#define TEST(x) if (!(x)) std::abort();
-#endif
+
 using namespace btree;
 
 int main() {
@@ -31,27 +27,27 @@ int main() {
         for (auto i : test) {
             b.push_back(i.first);
         }
-        TEST(a == b);
+        ASSERT(a == b);
         {
             auto copied = test;
             std::vector<int> c;
             for (auto i : copied) {
                 c.push_back(i.first);
             }
-            TEST(a == b);
-            TEST(test.size() == copied.size());
+            ASSERT(a == b);
+            ASSERT(test.size() == copied.size());
         }
         for (int i = 0; i < LIMIT; ++i) {
             auto target = rand();
             auto A = std::binary_search(a.begin(), a.end(), target);
             auto B = test.member(target);
-            TEST(A == B);
+            ASSERT(A == B);
         }
         std::random_shuffle(a.begin(), a.end());
         for (auto i : a) {
-            TEST(test.member(i));
+            ASSERT(test.member(i));
         }
     }
-    TEST(alive_node == 0);
+    ASSERT(alive_node == 0);
     return 0;
 }

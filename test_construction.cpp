@@ -64,14 +64,14 @@ int main(int argc, char** argv) {
             auto k = rand();
             test.insert(k, Cell());
             u.insert(k);
-            assert(Cell::alive == u.size());
+            ASSERT(Cell::alive == u.size());
         }
 
     }
     std::cout << "ctor: " << Cell::ctor << ", dtor: " << Cell::dtor << std::endl;
-    assert(Cell::ctor == Cell::dtor);
-    assert(alive_node == 0);
-    assert(Cell::alive == 0);
+    ASSERT(Cell::ctor == Cell::dtor);
+    ASSERT(alive_node == 0);
+    ASSERT(Cell::alive == 0);
     {
         BTree<int, Cell> test;
         for (int i = 0; i < LIMIT; ++i) {
@@ -86,7 +86,7 @@ int main(int argc, char** argv) {
         }
     }
     std::cout << "ctor: " << Cell::ctor << ", dtor: " << Cell::dtor << std::endl;
-    assert(Cell::ctor == Cell::dtor);
-    assert(alive_node == 0);
-    assert(Cell::alive == 0);
+    ASSERT(Cell::ctor == Cell::dtor);
+    ASSERT(alive_node == 0);
+    ASSERT(Cell::alive == 0);
 }

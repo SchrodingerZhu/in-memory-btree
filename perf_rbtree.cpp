@@ -1,7 +1,7 @@
 #include <map>
 
 #define DEFAULT_BTREE_FACTOR 6
-#define BINARY_SEARCH
+
 #include <iostream>
 #include <btree.hpp>
 #include <chrono>
